@@ -79,7 +79,7 @@ using namespace Util;
 
 #define MAGIC_NODE_TAG "_$AssimpFbx$"
 
-#define CONVERT_FBX_TIME(time) static_cast<double>(time) / 46186158000LL
+#define CONVERT_FBX_TIME(time) (static_cast<double>(time) * 1000.0 / 46186158000LL)
 
 FBXConverter::FBXConverter(aiScene *out, const Document &doc, bool removeEmptyBones) :
         defaultMaterialIndex(),
@@ -105,7 +105,7 @@ FBXConverter::FBXConverter(aiScene *out, const Document &doc, bool removeEmptyBo
     // The idea here is to traverse all objects to find these Textures and convert them,
     // so later during material conversion it will find converted texture in the textures_converted array.
     if (doc.Settings().readTextures) {
-        ConvertOrphantEmbeddedTextures();
+        ConvertOrphanedEmbeddedTextures();
     }
     ConvertRootNode();
 
@@ -185,6 +185,17 @@ std::string FBXConverter::MakeUniqueNodeName(const Model *const model, const aiN
     return unique_name;
 }
 
+/// This struct manages nodes which may or may not end up in the node hierarchy.
+/// When a node becomes a child of another node, that node becomes its owner and mOwnership should be released.
+struct FBXConverter::PotentialNode
+{
+    PotentialNode() : mOwnership(new aiNode), mNode(mOwnership.get()) {}
+    PotentialNode(const std::string& name) : mOwnership(new aiNode(name)), mNode(mOwnership.get()) {}
+    aiNode* operator->() { return mNode; }
+    std::unique_ptr<aiNode> mOwnership;
+    aiNode* mNode;
+};
+
 /// todo: pre-build node hierarchy
 /// todo: get bone from stack
 /// todo: make map of aiBone* to aiNode*
@@ -192,137 +203,129 @@ std::string FBXConverter::MakeUniqueNodeName(const Model *const model, const aiN
 void FBXConverter::ConvertNodes(uint64_t id, aiNode *parent, aiNode *root_node) {
     const std::vector<const Connection *> &conns = doc.GetConnectionsByDestinationSequenced(id, "Model");
 
-    std::vector<aiNode *> nodes;
+    std::vector<PotentialNode> nodes;
     nodes.reserve(conns.size());
 
-    std::vector<aiNode *> nodes_chain;
-    std::vector<aiNode *> post_nodes_chain;
+    std::vector<PotentialNode> nodes_chain;
+    std::vector<PotentialNode> post_nodes_chain;
 
-    try {
-        for (const Connection *con : conns) {
-            // ignore object-property links
-            if (con->PropertyName().length()) {
-                // really important we document why this is ignored.
-                FBXImporter::LogInfo("ignoring property link - no docs on why this is ignored");
-                continue; //?
+    for (const Connection *con : conns) {
+        // ignore object-property links
+        if (con->PropertyName().length()) {
+            // really important we document why this is ignored.
+            FBXImporter::LogInfo("ignoring property link - no docs on why this is ignored");
+            continue; //?
+        }
+
+        // convert connection source object into Object base class
+        const Object *const object = con->SourceObject();
+        if (nullptr == object) {
+            FBXImporter::LogError("failed to convert source object for Model link");
+            continue;
+        }
+
+        // FBX Model::Cube, Model::Bone001, etc elements
+        // This detects if we can cast the object into this model structure.
+        const Model *const model = dynamic_cast<const Model *>(object);
+
+        if (nullptr != model) {
+            nodes_chain.clear();
+            post_nodes_chain.clear();
+
+            aiMatrix4x4 new_abs_transform = parent->mTransformation;
+            std::string node_name = FixNodeName(model->Name());
+            // even though there is only a single input node, the design of
+            // assimp (or rather: the complicated transformation chain that
+            // is employed by fbx) means that we may need multiple aiNode's
+            // to represent a fbx node's transformation.
+
+            // generate node transforms - this includes pivot data
+            // if need_additional_node is true then you t
+            const bool need_additional_node = GenerateTransformationNodeChain(*model, node_name, nodes_chain, post_nodes_chain);
+
+            // assert that for the current node we must have at least a single transform
+            ai_assert(nodes_chain.size());
+
+            if (need_additional_node) {
+                nodes_chain.emplace_back(PotentialNode(node_name));
             }
 
-            // convert connection source object into Object base class
-            const Object *const object = con->SourceObject();
-            if (nullptr == object) {
-                FBXImporter::LogError("failed to convert source object for Model link");
-                continue;
-            }
+            //setup metadata on newest node
+            SetupNodeMetadata(*model, *nodes_chain.back().mNode);
 
-            // FBX Model::Cube, Model::Bone001, etc elements
-            // This detects if we can cast the object into this model structure.
-            const Model *const model = dynamic_cast<const Model *>(object);
+            // link all nodes in a row
+            aiNode *last_parent = parent;
+            for (PotentialNode& child : nodes_chain) {
+                ai_assert(child.mNode);
 
-            if (nullptr != model) {
-                nodes_chain.clear();
-                post_nodes_chain.clear();
-
-                aiMatrix4x4 new_abs_transform = parent->mTransformation;
-                std::string node_name = FixNodeName(model->Name());
-                // even though there is only a single input node, the design of
-                // assimp (or rather: the complicated transformation chain that
-                // is employed by fbx) means that we may need multiple aiNode's
-                // to represent a fbx node's transformation.
-
-                // generate node transforms - this includes pivot data
-                // if need_additional_node is true then you t
-                const bool need_additional_node = GenerateTransformationNodeChain(*model, node_name, nodes_chain, post_nodes_chain);
-
-                // assert that for the current node we must have at least a single transform
-                ai_assert(nodes_chain.size());
-
-                if (need_additional_node) {
-                    nodes_chain.push_back(new aiNode(node_name));
+                if (last_parent != parent) {
+                    last_parent->mNumChildren = 1;
+                    last_parent->mChildren = new aiNode *[1];
+                    last_parent->mChildren[0] = child.mOwnership.release();
                 }
 
-                //setup metadata on newest node
-                SetupNodeMetadata(*model, *nodes_chain.back());
+                child->mParent = last_parent;
+                last_parent = child.mNode;
 
-                // link all nodes in a row
-                aiNode *last_parent = parent;
-                for (aiNode *child : nodes_chain) {
-                    ai_assert(child);
+                new_abs_transform *= child->mTransformation;
+            }
+
+            // attach geometry
+            ConvertModel(*model, nodes_chain.back().mNode, root_node, new_abs_transform);
+
+            // check if there will be any child nodes
+            const std::vector<const Connection *> &child_conns = doc.GetConnectionsByDestinationSequenced(model->ID(), "Model");
+
+            // if so, link the geometric transform inverse nodes
+            // before we attach any child nodes
+            if (child_conns.size()) {
+                for (PotentialNode& postnode : post_nodes_chain) {
+                    ai_assert(postnode.mNode);
 
                     if (last_parent != parent) {
                         last_parent->mNumChildren = 1;
                         last_parent->mChildren = new aiNode *[1];
-                        last_parent->mChildren[0] = child;
+                        last_parent->mChildren[0] = postnode.mOwnership.release();
                     }
 
-                    child->mParent = last_parent;
-                    last_parent = child;
+                    postnode->mParent = last_parent;
+                    last_parent = postnode.mNode;
 
-                    new_abs_transform *= child->mTransformation;
+                    new_abs_transform *= postnode->mTransformation;
                 }
-
-                // attach geometry
-                ConvertModel(*model, nodes_chain.back(), root_node, new_abs_transform);
-
-                // check if there will be any child nodes
-                const std::vector<const Connection *> &child_conns = doc.GetConnectionsByDestinationSequenced(model->ID(), "Model");
-
-                // if so, link the geometric transform inverse nodes
-                // before we attach any child nodes
-                if (child_conns.size()) {
-                    for (aiNode *postnode : post_nodes_chain) {
-                        ai_assert(postnode);
-
-                        if (last_parent != parent) {
-                            last_parent->mNumChildren = 1;
-                            last_parent->mChildren = new aiNode *[1];
-                            last_parent->mChildren[0] = postnode;
-                        }
-
-                        postnode->mParent = last_parent;
-                        last_parent = postnode;
-
-                        new_abs_transform *= postnode->mTransformation;
-                    }
-                } else {
-                    // free the nodes we allocated as we don't need them
-                    Util::delete_fun<aiNode> deleter;
-                    std::for_each(
-                            post_nodes_chain.begin(),
-                            post_nodes_chain.end(),
-                            deleter);
-                }
-
-                // recursion call - child nodes
-                ConvertNodes(model->ID(), last_parent, root_node);
-
-                if (doc.Settings().readLights) {
-                    ConvertLights(*model, node_name);
-                }
-
-                if (doc.Settings().readCameras) {
-                    ConvertCameras(*model, node_name);
-                }
-
-                nodes.push_back(nodes_chain.front());
-                nodes_chain.clear();
+            } else {
+                // free the nodes we allocated as we don't need them
+                post_nodes_chain.clear();
             }
+
+            // recursion call - child nodes
+            ConvertNodes(model->ID(), last_parent, root_node);
+
+            if (doc.Settings().readLights) {
+                ConvertLights(*model, node_name);
+            }
+
+            if (doc.Settings().readCameras) {
+                ConvertCameras(*model, node_name);
+            }
+
+            nodes.push_back(std::move(nodes_chain.front()));
+            nodes_chain.clear();
         }
+    }
 
-        if (nodes.size()) {
-            parent->mChildren = new aiNode *[nodes.size()]();
-            parent->mNumChildren = static_cast<unsigned int>(nodes.size());
+    if (nodes.size()) {
+        parent->mChildren = new aiNode *[nodes.size()]();
+        parent->mNumChildren = static_cast<unsigned int>(nodes.size());
 
-            std::swap_ranges(nodes.begin(), nodes.end(), parent->mChildren);
-        } else {
-            parent->mNumChildren = 0;
-            parent->mChildren = nullptr;
+        for (unsigned int i = 0; i < nodes.size(); ++i)
+        {
+            parent->mChildren[i] = nodes[i].mOwnership.release();
         }
-
-    } catch (std::exception &) {
-        Util::delete_fun<aiNode> deleter;
-        std::for_each(nodes.begin(), nodes.end(), deleter);
-        std::for_each(nodes_chain.begin(), nodes_chain.end(), deleter);
-        std::for_each(post_nodes_chain.begin(), post_nodes_chain.end(), deleter);
+        nodes.clear();
+    } else {
+        parent->mNumChildren = 0;
+        parent->mChildren = nullptr;
     }
 }
 
@@ -681,8 +684,8 @@ std::string FBXConverter::NameTransformationChainNode(const std::string &name, T
     return name + std::string(MAGIC_NODE_TAG) + "_" + NameTransformationComp(comp);
 }
 
-bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std::string &name, std::vector<aiNode *> &output_nodes,
-        std::vector<aiNode *> &post_output_nodes) {
+bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std::string &name, std::vector<PotentialNode> &output_nodes,
+        std::vector<PotentialNode> &post_output_nodes) {
     const PropertyTable &props = model.Props();
     const Model::RotOrder rot = model.RotationOrder();
 
@@ -804,11 +807,6 @@ bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std
         aiMatrix4x4::Translation(-GeometricTranslation, chain[TransformationComp_GeometricTranslationInverse]);
     }
 
-    // is_complex needs to be consistent with NeedsComplexTransformationChain()
-    // or the interplay between this code and the animation converter would
-    // not be guaranteed.
-    //ai_assert(NeedsComplexTransformationChain(model) == ((chainBits & chainMaskComplex) != 0));
-
     // now, if we have more than just Translation, Scaling and Rotation,
     // we need to generate a full node chain to accommodate for assimp's
     // lack to express pivots and offsets.
@@ -833,7 +831,7 @@ bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std
                 chain[i] = chain[i].Inverse();
             }
 
-            aiNode *nd = new aiNode();
+            PotentialNode nd;
             nd->mName.Set(NameTransformationChainNode(name, comp));
             nd->mTransformation = chain[i];
 
@@ -841,9 +839,9 @@ bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std
             if (comp == TransformationComp_GeometricScalingInverse ||
                     comp == TransformationComp_GeometricRotationInverse ||
                     comp == TransformationComp_GeometricTranslationInverse) {
-                post_output_nodes.push_back(nd);
+                post_output_nodes.emplace_back(std::move(nd));
             } else {
-                output_nodes.push_back(nd);
+                output_nodes.emplace_back(std::move(nd));
             }
         }
 
@@ -852,8 +850,7 @@ bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std
     }
 
     // else, we can just multiply the matrices together
-    aiNode *nd = new aiNode();
-    output_nodes.push_back(nd);
+    PotentialNode nd;
 
     // name passed to the method is already unique
     nd->mName.Set(name);
@@ -862,6 +859,7 @@ bool FBXConverter::GenerateTransformationNodeChain(const Model &model, const std
     for (unsigned int i = TransformationComp_Translation; i < TransformationComp_MAXIMUM; i++) {
       nd->mTransformation = nd->mTransformation * chain[i];
     }
+    output_nodes.push_back(std::move(nd));
     return false;
 }
   
@@ -1163,7 +1161,8 @@ unsigned int FBXConverter::ConvertMeshSingleMaterial(const MeshGeometry &mesh, c
                 const std::vector<aiVector3D> &curVertices = shapeGeometry->GetVertices();
                 const std::vector<aiVector3D> &curNormals = shapeGeometry->GetNormals();
                 const std::vector<unsigned int> &curIndices = shapeGeometry->GetIndices();
-                animMesh->mName.Set(FixAnimMeshName(shapeGeometry->Name()));
+                //losing channel name if using shapeGeometry->Name()
+                animMesh->mName.Set(FixAnimMeshName(blendShapeChannel->Name()));
                 for (size_t j = 0; j < curIndices.size(); j++) {
                     const unsigned int curIndex = curIndices.at(j);
                     aiVector3D vertex = curVertices.at(j);
@@ -1289,7 +1288,8 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
         }
 
         if (binormals) {
-            ai_assert(tangents.size() == vertices.size() && binormals->size() == vertices.size());
+            ai_assert(tangents.size() == vertices.size());
+            ai_assert(binormals->size() == vertices.size());
 
             out_mesh->mTangents = new aiVector3D[vertices.size()];
             out_mesh->mBitangents = new aiVector3D[vertices.size()];
@@ -1542,10 +1542,10 @@ void FBXConverter::ConvertCluster(std::vector<aiBone *> &local_mesh_bones, const
     aiBone *bone = nullptr;
 
     if (bone_map.count(deformer_name)) {
-        ASSIMP_LOG_DEBUG_F("retrieved bone from lookup ", bone_name.C_Str(), ". Deformer:", deformer_name);
+        ASSIMP_LOG_VERBOSE_DEBUG_F("retrieved bone from lookup ", bone_name.C_Str(), ". Deformer:", deformer_name);
         bone = bone_map[deformer_name];
     } else {
-        ASSIMP_LOG_DEBUG_F("created new bone ", bone_name.C_Str(), ". Deformer: ", deformer_name);
+        ASSIMP_LOG_VERBOSE_DEBUG_F("created new bone ", bone_name.C_Str(), ". Deformer: ", deformer_name);
         bone = new aiBone();
         bone->mName = bone_name;
 
@@ -1718,14 +1718,14 @@ aiString FBXConverter::GetTexturePath(const Texture *tex) {
         bool textureReady = false; //tells if our texture is ready (if it was loaded or if it was found)
         unsigned int index=0;
 
-        VideoMap::const_iterator it = textures_converted.find(*media);
+        VideoMap::const_iterator it = textures_converted.find(media);
         if (it != textures_converted.end()) {
             index = (*it).second;
             textureReady = true;
         } else {
             if (media->ContentLength() > 0) {
                 index = ConvertVideo(*media);
-                textures_converted[*media] = index;
+                textures_converted[media] = index;
                 textureReady = true;
             }
         }
@@ -1991,6 +1991,7 @@ void FBXConverter::SetTextureProperties(aiMaterial *out_mat, const TextureMap &_
     TrySetTextureProperties(out_mat, _textures, "ShininessExponent", aiTextureType_SHININESS, mesh);
     TrySetTextureProperties(out_mat, _textures, "TransparencyFactor", aiTextureType_OPACITY, mesh);
     TrySetTextureProperties(out_mat, _textures, "EmissiveFactor", aiTextureType_EMISSIVE, mesh);
+    TrySetTextureProperties(out_mat, _textures, "ReflectionFactor", aiTextureType_METALNESS, mesh);
     //Maya counterparts
     TrySetTextureProperties(out_mat, _textures, "Maya|DiffuseTexture", aiTextureType_DIFFUSE, mesh);
     TrySetTextureProperties(out_mat, _textures, "Maya|NormalTexture", aiTextureType_NORMALS, mesh);
@@ -1999,26 +2000,54 @@ void FBXConverter::SetTextureProperties(aiMaterial *out_mat, const TextureMap &_
     TrySetTextureProperties(out_mat, _textures, "Maya|ReflectionMapTexture", aiTextureType_REFLECTION, mesh);
 
     // Maya PBR
-    TrySetTextureProperties(out_mat, _textures, "Maya|baseColor|file", aiTextureType_BASE_COLOR, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|normalCamera|file", aiTextureType_NORMAL_CAMERA, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|emissionColor|file", aiTextureType_EMISSION_COLOR, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|metalness|file", aiTextureType_METALNESS, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|diffuseRoughness|file", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|baseColor", aiTextureType_BASE_COLOR, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|normalCamera", aiTextureType_NORMAL_CAMERA, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|emissionColor", aiTextureType_EMISSION_COLOR, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|metalness", aiTextureType_METALNESS, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|diffuseRoughness", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
 
     // Maya stingray
-    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_color_map|file", aiTextureType_BASE_COLOR, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_normal_map|file", aiTextureType_NORMAL_CAMERA, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_emissive_map|file", aiTextureType_EMISSION_COLOR, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_metallic_map|file", aiTextureType_METALNESS, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_roughness_map|file", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
-    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_ao_map|file", aiTextureType_AMBIENT_OCCLUSION, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_color_map", aiTextureType_BASE_COLOR, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_normal_map", aiTextureType_NORMAL_CAMERA, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_emissive_map", aiTextureType_EMISSION_COLOR, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_metallic_map", aiTextureType_METALNESS, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_roughness_map", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
+    TrySetTextureProperties(out_mat, _textures, "Maya|TEX_ao_map", aiTextureType_AMBIENT_OCCLUSION, mesh);
 
-    // 3DSMax PBR
+    // 3DSMax Physical material
     TrySetTextureProperties(out_mat, _textures, "3dsMax|Parameters|base_color_map", aiTextureType_BASE_COLOR, mesh);
     TrySetTextureProperties(out_mat, _textures, "3dsMax|Parameters|bump_map", aiTextureType_NORMAL_CAMERA, mesh);
     TrySetTextureProperties(out_mat, _textures, "3dsMax|Parameters|emission_map", aiTextureType_EMISSION_COLOR, mesh);
     TrySetTextureProperties(out_mat, _textures, "3dsMax|Parameters|metalness_map", aiTextureType_METALNESS, mesh);
     TrySetTextureProperties(out_mat, _textures, "3dsMax|Parameters|roughness_map", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
+
+    // 3DSMax PBR materials
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|base_color_map", aiTextureType_BASE_COLOR, mesh);
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|norm_map", aiTextureType_NORMAL_CAMERA, mesh);
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|emit_color_map", aiTextureType_EMISSION_COLOR, mesh);
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|ao_map", aiTextureType_AMBIENT_OCCLUSION, mesh);
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|opacity_map", aiTextureType_OPACITY, mesh);
+    // Metalness/Roughness material type
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|metalness_map", aiTextureType_METALNESS, mesh);
+    // Specular/Gloss material type
+    TrySetTextureProperties(out_mat, _textures, "3dsMax|main|specular_map", aiTextureType_SPECULAR, mesh);
+
+    // Glossiness vs roughness in 3ds Max Pbr Materials
+    int useGlossiness;
+    if (out_mat->Get("$raw.3dsMax|main|useGlossiness", aiTextureType_NONE, 0, useGlossiness) == aiReturn_SUCCESS) {
+        // These textures swap meaning if ((useGlossiness == 1) != (material type is Specular/Gloss))
+        if (useGlossiness == 1) {
+            TrySetTextureProperties(out_mat, _textures, "3dsMax|main|roughness_map", aiTextureType_SHININESS, mesh);
+            TrySetTextureProperties(out_mat, _textures, "3dsMax|main|glossiness_map", aiTextureType_SHININESS, mesh);
+        }
+        else if (useGlossiness == 2) {
+            TrySetTextureProperties(out_mat, _textures, "3dsMax|main|roughness_map", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
+            TrySetTextureProperties(out_mat, _textures, "3dsMax|main|glossiness_map", aiTextureType_DIFFUSE_ROUGHNESS, mesh);
+        }
+        else {
+            FBXImporter::LogWarn("A 3dsMax Pbr Material must have a useGlossiness value to correctly interpret roughness and glossiness textures.");
+        }
+    }
 }
 
 void FBXConverter::SetTextureProperties(aiMaterial *out_mat, const LayeredTextureMap &layeredTextures, const MeshGeometry *const mesh) {
@@ -2223,12 +2252,12 @@ void FBXConverter::SetShadingPropertiesRaw(aiMaterial *out_mat, const PropertyTa
             if (media != nullptr && media->ContentLength() > 0) {
                 unsigned int index;
 
-                VideoMap::const_iterator videoIt = textures_converted.find(*media);
+                VideoMap::const_iterator videoIt = textures_converted.find(media);
                 if (videoIt != textures_converted.end()) {
                     index = videoIt->second;
                 } else {
                     index = ConvertVideo(*media);
-                    textures_converted[*media] = index;
+                    textures_converted[media] = index;
                 }
 
                 // setup texture reference string (copied from ColladaLoader::FindFilenameForEffectTexture)
@@ -2531,7 +2560,7 @@ void FBXConverter::ConvertAnimationStack(const AnimationStack &st) {
                     meshMorphAnim->mKeys[j].mNumValuesAndWeights = numValuesAndWeights;
                     meshMorphAnim->mKeys[j].mValues = new unsigned int[numValuesAndWeights];
                     meshMorphAnim->mKeys[j].mWeights = new double[numValuesAndWeights];
-                    meshMorphAnim->mKeys[j].mTime = CONVERT_FBX_TIME(animIt.first) * anim_fps;
+                    meshMorphAnim->mKeys[j].mTime = CONVERT_FBX_TIME(animIt.first);
                     for (unsigned int k = 0; k < numValuesAndWeights; k++) {
                         meshMorphAnim->mKeys[j].mValues[k] = keyData->values.at(k);
                         meshMorphAnim->mKeys[j].mWeights[k] = keyData->weights.at(k);
@@ -2549,8 +2578,8 @@ void FBXConverter::ConvertAnimationStack(const AnimationStack &st) {
         return;
     }
 
-    double start_time_fps = has_local_startstop ? (CONVERT_FBX_TIME(start_time) * anim_fps) : min_time;
-    double stop_time_fps = has_local_startstop ? (CONVERT_FBX_TIME(stop_time) * anim_fps) : max_time;
+    double start_time_fps = has_local_startstop ? CONVERT_FBX_TIME(start_time) : min_time;
+    double stop_time_fps = has_local_startstop ? CONVERT_FBX_TIME(stop_time) : max_time;
 
     // adjust relative timing for animation
     for (unsigned int c = 0; c < anim->mNumChannels; c++) {
@@ -2719,7 +2748,7 @@ void FBXConverter::GenerateNodeAnimations(std::vector<aiNodeAnim *> &node_anims,
             if (doc.Settings().optimizeEmptyAnimationCurves &&
                     IsRedundantAnimationData(target, comp, (chain[i]->second))) {
 
-                FBXImporter::LogDebug("dropping redundant animation channel for node " + target.Name());
+                FBXImporter::LogVerboseDebug("dropping redundant animation channel for node " + target.Name());
                 continue;
             }
 
@@ -3070,7 +3099,7 @@ aiNodeAnim* FBXConverter::GenerateSimpleNodeAnim(const std::string& name,
         InterpolateKeys(outTranslations, keytimes, keyframeLists[TransformationComp_Translation], defTranslate, maxTime, minTime);
     } else {
         for (size_t i = 0; i < keyCount; ++i) {
-            outTranslations[i].mTime = CONVERT_FBX_TIME(keytimes[i]) * anim_fps;
+            outTranslations[i].mTime = CONVERT_FBX_TIME(keytimes[i]);
             outTranslations[i].mValue = defTranslate;
         }
     }
@@ -3079,7 +3108,7 @@ aiNodeAnim* FBXConverter::GenerateSimpleNodeAnim(const std::string& name,
         InterpolateKeys(outRotations, keytimes, keyframeLists[TransformationComp_Rotation], defRotation, maxTime, minTime, rotOrder);
     } else {
         for (size_t i = 0; i < keyCount; ++i) {
-            outRotations[i].mTime = CONVERT_FBX_TIME(keytimes[i]) * anim_fps;
+            outRotations[i].mTime = CONVERT_FBX_TIME(keytimes[i]);
             outRotations[i].mValue = defQuat;
         }
     }
@@ -3088,7 +3117,7 @@ aiNodeAnim* FBXConverter::GenerateSimpleNodeAnim(const std::string& name,
         InterpolateKeys(outScales, keytimes, keyframeLists[TransformationComp_Scaling], defScale, maxTime, minTime);
     } else {
         for (size_t i = 0; i < keyCount; ++i) {
-            outScales[i].mTime = CONVERT_FBX_TIME(keytimes[i]) * anim_fps;
+            outScales[i].mTime = CONVERT_FBX_TIME(keytimes[i]);
             outScales[i].mValue = defScale;
         }
     }
@@ -3164,7 +3193,8 @@ FBXConverter::KeyFrameListList FBXConverter::GetKeyframeList(const std::vector<c
             }
 
             const AnimationCurve *const curve = kv.second;
-            ai_assert(curve->GetKeys().size() == curve->GetValues().size() && curve->GetKeys().size());
+            ai_assert(curve->GetKeys().size() == curve->GetValues().size());
+            ai_assert(curve->GetKeys().size());
 
             //get values within the start/stop time window
             std::shared_ptr<KeyTimeList> Keys(new KeyTimeList());
@@ -3276,7 +3306,7 @@ void FBXConverter::InterpolateKeys(aiVectorKey *valOut, const KeyTimeList &keys,
         }
 
         // magic value to convert fbx times to seconds
-        valOut->mTime = CONVERT_FBX_TIME(time) * anim_fps;
+        valOut->mTime = CONVERT_FBX_TIME(time);
 
         min_time = std::min(min_time, valOut->mTime);
         max_time = std::max(max_time, valOut->mTime);
@@ -3467,7 +3497,7 @@ void FBXConverter::TransferDataToScene() {
     }
 }
 
-void FBXConverter::ConvertOrphantEmbeddedTextures() {
+void FBXConverter::ConvertOrphanedEmbeddedTextures() {
     // in C++14 it could be:
     // for (auto&& [id, object] : objects)
     for (auto &&id_and_object : doc.Objects()) {
@@ -3482,10 +3512,11 @@ void FBXConverter::ConvertOrphantEmbeddedTextures() {
                 const char *obtype = key.begin();
                 const size_t length = static_cast<size_t>(key.end() - key.begin());
                 if (strncmp(obtype, "Texture", length) == 0) {
-                    const Texture *texture = static_cast<const Texture *>(object->Get());
-                    if (texture->Media() && texture->Media()->ContentLength() > 0) {
-                        realTexture = texture;
-                    }
+                    if (const Texture *texture = static_cast<const Texture *>(object->Get())) {
+                        if (texture->Media() && texture->Media()->ContentLength() > 0) {
+                            realTexture = texture;
+                        }
+                    }    
                 }
             } catch (...) {
                 // do nothing
@@ -3493,7 +3524,7 @@ void FBXConverter::ConvertOrphantEmbeddedTextures() {
             if (realTexture) {
                 const Video *media = realTexture->Media();
                 unsigned int index = ConvertVideo(*media);
-                textures_converted[*media] = index;
+                textures_converted[media] = index;
             }
         }
     }

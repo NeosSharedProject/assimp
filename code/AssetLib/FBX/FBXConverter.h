@@ -171,9 +171,10 @@ private:
 
     // ------------------------------------------------------------------------------------------------
     /**
-    *  note: memory for output_nodes will be managed by the caller
+    *  note: memory for output_nodes is managed by the caller, via the PotentialNode struct.
     */
-    bool GenerateTransformationNodeChain(const Model& model, const std::string& name, std::vector<aiNode*>& output_nodes, std::vector<aiNode*>& post_output_nodes);
+    struct PotentialNode;
+    bool GenerateTransformationNodeChain(const Model& model, const std::string& name, std::vector<PotentialNode>& output_nodes, std::vector<PotentialNode>& post_output_nodes);
 
     // ------------------------------------------------------------------------------------------------
     void SetupNodeMetadata(const Model& model, aiNode& nd);
@@ -220,8 +221,8 @@ private:
     *    each output vertex the DOM index it maps to.
     */
     void ConvertWeights(aiMesh *out, const MeshGeometry &geo, const aiMatrix4x4 &absolute_transform,
-                        aiNode *parent = NULL, unsigned int materialIndex = NO_MATERIAL_SEPARATION,
-                        std::vector<unsigned int> *outputVertStartIndices = NULL);
+            aiNode *parent = nullptr, unsigned int materialIndex = NO_MATERIAL_SEPARATION,
+            std::vector<unsigned int> *outputVertStartIndices = nullptr);
 
     // ------------------------------------------------------------------------------------------------
     void ConvertCluster(std::vector<aiBone *> &local_mesh_bones, const Cluster *cl,
@@ -412,7 +413,7 @@ private:
 
     // ------------------------------------------------------------------------------------------------
     // FBX file could have embedded textures not connected to anything
-    void ConvertOrphantEmbeddedTextures();
+    void ConvertOrphanedEmbeddedTextures();
 
 private:
     // 0: not assigned yet, others: index is value - 1
@@ -428,7 +429,7 @@ private:
     using MaterialMap = std::fbx_unordered_map<const Material*, unsigned int>;
     MaterialMap materials_converted;
 
-    using VideoMap = std::fbx_unordered_map<const Video, unsigned int>;
+    using VideoMap = std::fbx_unordered_map<const Video*, unsigned int>;
     VideoMap textures_converted;
 
     using MeshMap = std::fbx_unordered_map<const Geometry*, std::vector<unsigned int> >;

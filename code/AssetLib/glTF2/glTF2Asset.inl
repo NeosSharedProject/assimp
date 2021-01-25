@@ -44,6 +44,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <assimp/StringUtils.h>
 #include <assimp/DefaultLogger.hpp>
+#include <assimp/MemoryIOWrapper.h>
 
 using namespace Assimp;
 
@@ -180,7 +181,10 @@ inline Value *FindObject(Value &val, const char *id) {
 
 template <class T>
 inline LazyDict<T>::LazyDict(Asset &asset, const char *dictId, const char *extId) :
-        mDictId(dictId), mExtId(extId), mDict(0), mAsset(asset) {
+        mDictId(dictId),
+        mExtId(extId),
+        mDict(0),
+        mAsset(asset) {
     asset.mDicts.push_back(this); // register to the list of dictionaries
 }
 
@@ -266,27 +270,32 @@ Ref<T> LazyDict<T>::Retrieve(unsigned int i) {
 
     // read it from the JSON object
     if (!mDict) {
-        throw DeadlyImportError("GLTF: Missing section \"" + std::string(mDictId) + "\"");
+        throw DeadlyImportError("GLTF: Missing section \"", mDictId, "\"");
     }
 
     if (!mDict->IsArray()) {
-        throw DeadlyImportError("GLTF: Field is not an array \"" + std::string(mDictId) + "\"");
+        throw DeadlyImportError("GLTF: Field \"", mDictId, "\"  is not an array");
+    }
+
+    if (i >= mDict->Size()) {
+        throw DeadlyImportError("GLTF: Array index ", i, " is out of bounds (", mDict->Size(), ") for \"", mDictId, "\"");
     }
 
     Value &obj = (*mDict)[i];
 
     if (!obj.IsObject()) {
-        throw DeadlyImportError("GLTF: Object at index \"" + to_string(i) + "\" is not a JSON object");
+        throw DeadlyImportError("GLTF: Object at index ", i, " in array \"", mDictId, "\" is not a JSON object");
     }
 
     if (mRecursiveReferenceCheck.find(i) != mRecursiveReferenceCheck.end()) {
-        throw DeadlyImportError("GLTF: Object at index \"" + to_string(i) + "\" has recursive reference to itself");
+        throw DeadlyImportError("GLTF: Object at index ", i, " in array \"", mDictId, "\" has recursive reference to itself");
     }
     mRecursiveReferenceCheck.insert(i);
 
     // Unique ptr prevents memory leak in case of Read throws an exception
     auto inst = std::unique_ptr<T>(new T());
-    inst->id = std::string(mDictId) + "_" + to_string(i);
+    // Try to make this human readable so it can be used in error messages.
+    inst->id = std::string(mDictId) + "[" + to_string(i) + "]";
     inst->oIndex = i;
     ReadMember(obj, "name", inst->name);
     inst->Read(obj, mAsset);
@@ -342,7 +351,10 @@ Ref<T> LazyDict<T>::Create(const char *id) {
 //
 
 inline Buffer::Buffer() :
-        byteLength(0), type(Type_arraybuffer), EncodedRegion_Current(nullptr), mIsSpecial(false) {}
+        byteLength(0),
+        type(Type_arraybuffer),
+        EncodedRegion_Current(nullptr),
+        mIsSpecial(false) {}
 
 inline Buffer::~Buffer() {
     for (SEncodedRegion *reg : EncodedRegion_List)
@@ -375,13 +387,13 @@ inline void Buffer::Read(Value &obj, Asset &r) {
             this->mData.reset(data, std::default_delete<uint8_t[]>());
 
             if (statedLength > 0 && this->byteLength != statedLength) {
-                throw DeadlyImportError("GLTF: buffer \"" + id + "\", expected " + to_string(statedLength) +
-                                        " bytes, but found " + to_string(dataURI.dataLength));
+                throw DeadlyImportError("GLTF: buffer \"", id, "\", expected ", to_string(statedLength),
+                                        " bytes, but found ", to_string(dataURI.dataLength));
             }
         } else { // assume raw data
             if (statedLength != dataURI.dataLength) {
-                throw DeadlyImportError("GLTF: buffer \"" + id + "\", expected " + to_string(statedLength) +
-                                        " bytes, but found " + to_string(dataURI.dataLength));
+                throw DeadlyImportError("GLTF: buffer \"", id, "\", expected ", to_string(statedLength),
+                                        " bytes, but found ", to_string(dataURI.dataLength));
             }
 
             this->mData.reset(new uint8_t[dataURI.dataLength], std::default_delete<uint8_t[]>());
@@ -389,7 +401,10 @@ inline void Buffer::Read(Value &obj, Asset &r) {
         }
     } else { // Local file
         if (byteLength > 0) {
-            std::string dir = !r.mCurrentAssetDir.empty() ? (r.mCurrentAssetDir) : "";
+            std::string dir = !r.mCurrentAssetDir.empty() ? (
+                r.mCurrentAssetDir.back() == '/' ?
+                   r.mCurrentAssetDir : r.mCurrentAssetDir + '/'
+            ) : "";
 
             IOStream *file = r.OpenFile(dir + uri, "rb");
             if (file) {
@@ -397,9 +412,9 @@ inline void Buffer::Read(Value &obj, Asset &r) {
                 delete file;
 
                 if (!ok)
-                    throw DeadlyImportError("GLTF: error while reading referenced file \"" + std::string(uri) + "\"");
+                    throw DeadlyImportError("GLTF: error while reading referenced file \"", uri, "\"");
             } else {
-                throw DeadlyImportError("GLTF: could not open referenced file \"" + std::string(uri) + "\"");
+                throw DeadlyImportError("GLTF: could not open referenced file \"", uri, "\"");
             }
         }
     }
@@ -430,8 +445,8 @@ inline void Buffer::EncodedRegion_Mark(const size_t pOffset, const size_t pEncod
 
         char val[val_size];
 
-        ai_snprintf(val, val_size, "%llu", (long long)pOffset);
-        throw DeadlyImportError(std::string("GLTF: incorrect offset value (") + val + ") for marking encoded region.");
+        ai_snprintf(val, val_size, AI_SIZEFMT, pOffset);
+        throw DeadlyImportError("GLTF: incorrect offset value (", val, ") for marking encoded region.");
     }
 
     // Check length
@@ -440,8 +455,8 @@ inline void Buffer::EncodedRegion_Mark(const size_t pOffset, const size_t pEncod
 
         char val[val_size];
 
-        ai_snprintf(val, val_size, "%llu, %llu", (long long)pOffset, (long long)pEncodedData_Length);
-        throw DeadlyImportError(std::string("GLTF: encoded region with offset/length (") + val + ") is out of range.");
+        ai_snprintf(val, val_size, AI_SIZEFMT "/" AI_SIZEFMT, pOffset, pEncodedData_Length);
+        throw DeadlyImportError("GLTF: encoded region with offset/length (", val, ") is out of range.");
     }
 
     // Add new region
@@ -461,7 +476,7 @@ inline void Buffer::EncodedRegion_SetCurrent(const std::string &pID) {
         }
     }
 
-    throw DeadlyImportError("GLTF: EncodedRegion with ID: \"" + pID + "\" not found.");
+    throw DeadlyImportError("GLTF: EncodedRegion with ID: \"", pID, "\" not found.");
 }
 
 inline bool Buffer::ReplaceData(const size_t pBufferData_Offset, const size_t pBufferData_Count, const uint8_t *pReplace_Data, const size_t pReplace_Count) {
@@ -517,7 +532,7 @@ inline void Buffer::Grow(size_t amount) {
     if (amount <= 0) {
         return;
     }
-    
+
     // Capacity is big enough
     if (capacity >= byteLength + amount) {
         byteLength += amount;
@@ -545,14 +560,77 @@ inline void BufferView::Read(Value &obj, Asset &r) {
         buffer = r.buffers.Retrieve(bufferVal->GetUint());
     }
 
+    if (!buffer) {
+        throw DeadlyImportError("GLTF: Buffer view without valid buffer.");
+    }
+
     byteOffset = MemberOrDefault(obj, "byteOffset", size_t(0));
     byteLength = MemberOrDefault(obj, "byteLength", size_t(0));
     byteStride = MemberOrDefault(obj, "byteStride", 0u);
+
+    // Check length
+    if ((byteOffset + byteLength) > buffer->byteLength) {
+        throw DeadlyImportError("GLTF: Buffer view with offset/length (", byteOffset, "/", byteLength, ") is out of range.");
+    }
+}
+
+inline uint8_t *BufferView::GetPointer(size_t accOffset) {
+    if (!buffer) return 0;
+    uint8_t *basePtr = buffer->GetPointer();
+    if (!basePtr) return 0;
+
+    size_t offset = accOffset + byteOffset;
+    if (buffer->EncodedRegion_Current != nullptr) {
+        const size_t begin = buffer->EncodedRegion_Current->Offset;
+        const size_t end = begin + buffer->EncodedRegion_Current->DecodedData_Length;
+        if ((offset >= begin) && (offset < end))
+            return &buffer->EncodedRegion_Current->DecodedData[offset - begin];
+    }
+
+    return basePtr + offset;
 }
 
 //
 // struct Accessor
 //
+inline void Accessor::Sparse::PopulateData(size_t numBytes, uint8_t *bytes) {
+    if (bytes) {
+        data.assign(bytes, bytes + numBytes);
+    } else {
+        data.resize(numBytes, 0x00);
+    }
+}
+
+inline void Accessor::Sparse::PatchData(unsigned int elementSize) {
+    uint8_t *pIndices = indices->GetPointer(indicesByteOffset);
+    const unsigned int indexSize = int(ComponentTypeSize(indicesType));
+    uint8_t *indicesEnd = pIndices + count * indexSize;
+
+    uint8_t *pValues = values->GetPointer(valuesByteOffset);
+    while (pIndices != indicesEnd) {
+        size_t offset;
+        switch (indicesType) {
+        case ComponentType_UNSIGNED_BYTE:
+            offset = *pIndices;
+            break;
+        case ComponentType_UNSIGNED_SHORT:
+            offset = *reinterpret_cast<uint16_t *>(pIndices);
+            break;
+        case ComponentType_UNSIGNED_INT:
+            offset = *reinterpret_cast<uint32_t *>(pIndices);
+            break;
+        default:
+            // have fun with float and negative values from signed types as indices.
+            throw DeadlyImportError("Unsupported component type in index.");
+        }
+
+        offset *= elementSize;
+        std::memcpy(data.data() + offset, pValues, elementSize);
+
+        pValues += elementSize;
+        pIndices += indexSize;
+    }
+}
 
 inline void Accessor::Read(Value &obj, Asset &r) {
 
@@ -566,6 +644,56 @@ inline void Accessor::Read(Value &obj, Asset &r) {
 
     const char *typestr;
     type = ReadMember(obj, "type", typestr) ? AttribType::FromString(typestr) : AttribType::SCALAR;
+
+    if (bufferView) {
+        // Check length
+        unsigned long long byteLength = (unsigned long long)GetBytesPerComponent() * (unsigned long long)count;
+
+        // handle integer overflow
+        if (byteLength < count) {
+            throw DeadlyImportError("GLTF: Accessor with offset/count (", byteOffset, "/", count, ") is out of range.");
+        }
+
+        if ((byteOffset + byteLength) > bufferView->byteLength || (bufferView->byteOffset + byteOffset + byteLength) > bufferView->buffer->byteLength) {
+            throw DeadlyImportError("GLTF: Accessor with offset/length (", byteOffset, "/", byteLength, ") is out of range.");
+        }
+    }
+
+    if (Value *sparseValue = FindObject(obj, "sparse")) {
+        sparse.reset(new Sparse);
+        // count
+        ReadMember(*sparseValue, "count", sparse->count);
+
+        // indices
+        if (Value *indicesValue = FindObject(*sparseValue, "indices")) {
+            //indices bufferView
+            Value *indiceViewID = FindUInt(*indicesValue, "bufferView");
+            sparse->indices = r.bufferViews.Retrieve(indiceViewID->GetUint());
+            //indices byteOffset
+            sparse->indicesByteOffset = MemberOrDefault(*indicesValue, "byteOffset", size_t(0));
+            //indices componentType
+            sparse->indicesType = MemberOrDefault(*indicesValue, "componentType", ComponentType_BYTE);
+            //sparse->indices->Read(*indicesValue, r);
+        }
+
+        // value
+        if (Value *valuesValue = FindObject(*sparseValue, "values")) {
+            //value bufferView
+            Value *valueViewID = FindUInt(*valuesValue, "bufferView");
+            sparse->values = r.bufferViews.Retrieve(valueViewID->GetUint());
+            //value byteOffset
+            sparse->valuesByteOffset = MemberOrDefault(*valuesValue, "byteOffset", size_t(0));
+            //sparse->values->Read(*valuesValue, r);
+        }
+
+        // indicesType
+        sparse->indicesType = MemberOrDefault(*sparseValue, "componentType", ComponentType_UNSIGNED_SHORT);
+
+        const unsigned int elementSize = GetElementSize();
+        const size_t dataSize = count * elementSize;
+        sparse->PopulateData(dataSize, bufferView ? bufferView->GetPointer(byteOffset) : 0);
+        sparse->PatchData(elementSize);
+    }
 }
 
 inline unsigned int Accessor::GetNumComponents() {
@@ -581,6 +709,9 @@ inline unsigned int Accessor::GetElementSize() {
 }
 
 inline uint8_t *Accessor::GetPointer() {
+    if (sparse)
+        return sparse->data.data();
+
     if (!bufferView || !bufferView->buffer) return 0;
     uint8_t *basePtr = bufferView->buffer->GetPointer();
     if (!basePtr) return 0;
@@ -617,14 +748,14 @@ inline void CopyData(size_t count,
         }
     }
 }
+
 } // namespace
 
-template<class T>
-void Accessor::ExtractData(T *&outData)
-{
-    uint8_t* data = GetPointer();
+template <class T>
+void Accessor::ExtractData(T *&outData) {
+    uint8_t *data = GetPointer();
     if (!data) {
-        throw DeadlyImportError("GLTF: data is NULL");
+        throw DeadlyImportError("GLTF2: data is null when extracting data from ", getContextForErrorMessages(id, name));
     }
 
     const size_t elemSize = GetElementSize();
@@ -633,9 +764,15 @@ void Accessor::ExtractData(T *&outData)
     const size_t stride = bufferView && bufferView->byteStride ? bufferView->byteStride : elemSize;
 
     const size_t targetElemSize = sizeof(T);
-    ai_assert(elemSize <= targetElemSize);
 
-    ai_assert(count * stride <= bufferView->byteLength);
+    if (elemSize > targetElemSize) {
+        throw DeadlyImportError("GLTF: elemSize ", elemSize, " > targetElemSize ", targetElemSize, " in ", getContextForErrorMessages(id, name));
+    }
+
+    const size_t maxSize = (bufferView ? bufferView->byteLength : sparse->data.size());
+    if (count*stride > maxSize) {
+        throw DeadlyImportError("GLTF: count*stride ", (count * stride), " > maxSize ", maxSize, " in ", getContextForErrorMessages(id, name));
+    }
 
     outData = new T[count];
     if (stride == elemSize && targetElemSize == elemSize) {
@@ -660,8 +797,38 @@ inline void Accessor::WriteData(size_t _count, const void *src_buffer, size_t sr
     CopyData(_count, src, src_stride, dst, dst_stride);
 }
 
+inline void Accessor::WriteSparseValues(size_t _count, const void *src_data, size_t src_dataStride) {
+    if (!sparse)
+        return;
+
+    // values
+    uint8_t *value_buffer_ptr = sparse->values->buffer->GetPointer();
+    size_t value_offset = sparse->valuesByteOffset + sparse->values->byteOffset;
+    size_t value_dst_stride = GetNumComponents() * GetBytesPerComponent();
+    const uint8_t *value_src = reinterpret_cast<const uint8_t *>(src_data);
+    uint8_t *value_dst = reinterpret_cast<uint8_t *>(value_buffer_ptr + value_offset);
+    ai_assert(value_dst + _count * value_dst_stride <= value_buffer_ptr + sparse->values->buffer->byteLength);
+    CopyData(_count, value_src, src_dataStride, value_dst, value_dst_stride);
+}
+
+inline void Accessor::WriteSparseIndices(size_t _count, const void *src_idx, size_t src_idxStride) {
+    if (!sparse)
+        return;
+
+    // indices
+    uint8_t *indices_buffer_ptr = sparse->indices->buffer->GetPointer();
+    size_t indices_offset = sparse->indicesByteOffset + sparse->indices->byteOffset;
+    size_t indices_dst_stride = 1 * sizeof(unsigned short);
+    const uint8_t *indices_src = reinterpret_cast<const uint8_t *>(src_idx);
+    uint8_t *indices_dst = reinterpret_cast<uint8_t *>(indices_buffer_ptr + indices_offset);
+    ai_assert(indices_dst + _count * indices_dst_stride <= indices_buffer_ptr + sparse->indices->buffer->byteLength);
+    CopyData(_count, indices_src, src_idxStride, indices_dst, indices_dst_stride);
+}
 inline Accessor::Indexer::Indexer(Accessor &acc) :
-        accessor(acc), data(acc.GetPointer()), elemSize(acc.GetElementSize()), stride(acc.bufferView && acc.bufferView->byteStride ? acc.bufferView->byteStride : elemSize) {
+        accessor(acc),
+        data(acc.GetPointer()),
+        elemSize(acc.GetElementSize()),
+        stride(acc.bufferView && acc.bufferView->byteStride ? acc.bufferView->byteStride : elemSize) {
 }
 
 //! Accesses the i-th value as defined by the accessor
@@ -669,14 +836,18 @@ template <class T>
 T Accessor::Indexer::GetValue(int i) {
     ai_assert(data);
     ai_assert(i * stride < accessor.bufferView->byteLength);
+    // Ensure that the memcpy doesn't overwrite the local.
+    const size_t sizeToCopy = std::min(elemSize, sizeof(T));
     T value = T();
-    memcpy(&value, data + i * stride, elemSize);
-    //value >>= 8 * (sizeof(T) - elemSize);
+    // Assume platform endianness matches GLTF binary data (which is little-endian).
+    memcpy(&value, data + i * stride, sizeToCopy);
     return value;
 }
 
 inline Image::Image() :
-        width(0), height(0), mDataLength(0) {
+        width(0),
+        height(0),
+        mDataLength(0) {
 }
 
 inline void Image::Read(Value &obj, Asset &r) {
@@ -698,6 +869,14 @@ inline void Image::Read(Value &obj, Asset &r) {
             }
         } else if (Value *bufferViewVal = FindUInt(obj, "bufferView")) {
             this->bufferView = r.bufferViews.Retrieve(bufferViewVal->GetUint());
+            if (Value *mtype = FindString(obj, "mimeType")) {
+                this->mimeType = mtype->GetString();
+            }
+            if (!this->bufferView || this->mimeType.empty())
+            {
+                throw DeadlyImportError("GLTF2: ", getContextForErrorMessages(id, name), " does not have a URI, so it must have a valid bufferView and mimetype");
+            }
+
             Ref<Buffer> buffer = this->bufferView->buffer;
 
             this->mDataLength = this->bufferView->byteLength;
@@ -705,10 +884,10 @@ inline void Image::Read(Value &obj, Asset &r) {
 
             this->mData.reset(new uint8_t[this->mDataLength]);
             memcpy(this->mData.get(), buffer->GetPointer() + this->bufferView->byteOffset, this->mDataLength);
-
-            if (Value *mtype = FindString(obj, "mimeType")) {
-                this->mimeType = mtype->GetString();
-            }
+        }
+        else
+        {
+            throw DeadlyImportError("GLTF2: ", getContextForErrorMessages(id, name), " should have either a URI of a bufferView and mimetype" );
         }
     }
 }
@@ -867,6 +1046,44 @@ inline void Material::Read(Value &material, Asset &r) {
         if (r.extensionsUsed.KHR_texture_transform) {
         }
 
+        if (r.extensionsUsed.KHR_materials_sheen) {
+            if (Value *curMaterialSheen = FindObject(*extensions, "KHR_materials_sheen")) {
+                MaterialSheen sheen;
+
+                ReadMember(*curMaterialSheen, "sheenColorFactor", sheen.sheenColorFactor);
+                ReadTextureProperty(r, *curMaterialSheen, "sheenColorTexture", sheen.sheenColorTexture);
+                ReadMember(*curMaterialSheen, "sheenRoughnessFactor", sheen.sheenRoughnessFactor);
+                ReadTextureProperty(r, *curMaterialSheen, "sheenRoughnessTexture", sheen.sheenRoughnessTexture);
+
+                this->materialSheen = Nullable<MaterialSheen>(sheen);
+            }
+        }
+
+        if (r.extensionsUsed.KHR_materials_clearcoat) {
+            if (Value *curMaterialClearcoat = FindObject(*extensions, "KHR_materials_clearcoat")) {
+                MaterialClearcoat clearcoat;
+
+                ReadMember(*curMaterialClearcoat, "clearcoatFactor", clearcoat.clearcoatFactor);
+                ReadTextureProperty(r, *curMaterialClearcoat, "clearcoatTexture", clearcoat.clearcoatTexture);
+                ReadMember(*curMaterialClearcoat, "clearcoatRoughnessFactor", clearcoat.clearcoatRoughnessFactor);
+                ReadTextureProperty(r, *curMaterialClearcoat, "clearcoatRoughnessTexture", clearcoat.clearcoatRoughnessTexture);
+                ReadTextureProperty(r, *curMaterialClearcoat, "clearcoatNormalTexture", clearcoat.clearcoatNormalTexture);
+
+                this->materialClearcoat = Nullable<MaterialClearcoat>(clearcoat);
+            }
+        }
+
+        if (r.extensionsUsed.KHR_materials_transmission) {
+            if (Value *curMaterialTransmission = FindObject(*extensions, "KHR_materials_transmission")) {
+                MaterialTransmission transmission;
+
+                ReadMember(*curMaterialTransmission, "transmissionFactor", transmission.transmissionFactor);
+                ReadTextureProperty(r, *curMaterialTransmission, "transmissionTexture", transmission.transmissionTexture);
+
+                this->materialTransmission = Nullable<MaterialTransmission>(transmission);
+            }
+        }
+
         unlit = nullptr != FindObject(*extensions, "KHR_materials_unlit");
     }
 }
@@ -906,6 +1123,12 @@ inline void PbrSpecularGlossiness::SetDefaults() {
     glossinessFactor = 1.0;
 }
 
+inline void MaterialSheen::SetDefaults() {
+    //KHR_materials_sheen properties
+    SetVector(sheenColorFactor, defaultSheenFactor);
+    sheenRoughnessFactor = 0.f;
+}
+
 namespace {
 
 template <int N>
@@ -913,10 +1136,10 @@ inline int Compare(const char *attr, const char (&str)[N]) {
     return (strncmp(attr, str, N - 1) == 0) ? N - 1 : 0;
 }
 
-#ifdef _WIN32
-#    pragma warning(push)
-#    pragma warning(disable : 4706)
-#endif // _WIN32
+#if _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4706)
+#endif // _MSC_VER
 
 inline bool GetAttribVector(Mesh::Primitive &p, const char *attr, Mesh::AccessorList *&v, int &pos) {
     if ((pos = Compare(attr, "POSITION"))) {
@@ -980,7 +1203,10 @@ inline void Mesh::Read(Value &pJSON_Object, Asset &pAsset_Root) {
                     Mesh::AccessorList *vec = 0;
                     if (GetAttribVector(prim, attr, vec, undPos)) {
                         size_t idx = (attr[undPos] == '_') ? atoi(attr + undPos + 1) : 0;
-                        if ((*vec).size() <= idx) (*vec).resize(idx + 1);
+                        if ((*vec).size() != idx) {
+                            throw DeadlyImportError("GLTF: Invalid attribute: ", attr, ". All indices for indexed attribute semantics must start with 0 and be continuous positive integers: TEXCOORD_0, TEXCOORD_1, etc.");
+                        }
+                        (*vec).resize(idx + 1);
                         (*vec)[idx] = pAsset_Root.accessors.Retrieve(it->value.GetUint());
                     }
                 }
@@ -1035,11 +1261,11 @@ inline void Mesh::Read(Value &pJSON_Object, Asset &pAsset_Root) {
     }
 
     Value *extras = FindObject(pJSON_Object, "extras");
-    if (nullptr != extras ) {
-        if (Value* curTargetNames = FindArray(*extras, "targetNames")) {
+    if (nullptr != extras) {
+        if (Value *curTargetNames = FindArray(*extras, "targetNames")) {
             this->targetNames.resize(curTargetNames->Size());
             for (unsigned int i = 0; i < curTargetNames->Size(); ++i) {
-                Value& targetNameValue = (*curTargetNames)[i];
+                Value &targetNameValue = (*curTargetNames)[i];
                 if (targetNameValue.IsString()) {
                     this->targetNames[i] = targetNameValue.GetString();
                 }
@@ -1067,10 +1293,10 @@ inline void Camera::Read(Value &obj, Asset & /*r*/) {
         cameraProperties.perspective.zfar = MemberOrDefault(*it, "zfar", 100.f);
         cameraProperties.perspective.znear = MemberOrDefault(*it, "znear", 0.01f);
     } else {
-        cameraProperties.ortographic.xmag = MemberOrDefault(obj, "xmag", 1.f);
-        cameraProperties.ortographic.ymag = MemberOrDefault(obj, "ymag", 1.f);
-        cameraProperties.ortographic.zfar = MemberOrDefault(obj, "zfar", 100.f);
-        cameraProperties.ortographic.znear = MemberOrDefault(obj, "znear", 0.01f);
+        cameraProperties.ortographic.xmag = MemberOrDefault(*it, "xmag", 1.f);
+        cameraProperties.ortographic.ymag = MemberOrDefault(*it, "ymag", 1.f);
+        cameraProperties.ortographic.zfar = MemberOrDefault(*it, "zfar", 100.f);
+        cameraProperties.ortographic.znear = MemberOrDefault(*it, "znear", 0.01f);
     }
 }
 
@@ -1101,8 +1327,49 @@ inline void Light::Read(Value &obj, Asset & /*r*/) {
         Value *spot = FindObject(obj, "spot");
         if (!spot) throw DeadlyImportError("GLTF: Light missing its spot parameters");
         innerConeAngle = MemberOrDefault(*spot, "innerConeAngle", 0.0f);
-        outerConeAngle = MemberOrDefault(*spot, "outerConeAngle", M_PI / 4.0f);
+        outerConeAngle = MemberOrDefault(*spot, "outerConeAngle", static_cast<float>(M_PI / 4.0f));
     }
+}
+
+inline CustomExtension ReadExtensions(const char *name, Value& obj) {
+    CustomExtension ret;
+    ret.name = name;
+    if (obj.IsObject()) {
+        ret.mValues.isPresent = true;
+        for (auto it = obj.MemberBegin(); it != obj.MemberEnd(); ++it) {
+            auto& val = it->value;
+            ret.mValues.value.push_back(ReadExtensions(it->name.GetString(), val));
+        }
+    }
+    else if (obj.IsArray()) {
+        ret.mValues.value.reserve(obj.Size());
+        ret.mValues.isPresent = true;
+        for (unsigned int i = 0; i < obj.Size(); ++i)
+        {
+            ret.mValues.value.push_back(ReadExtensions(name, obj[i]));
+        }
+    }
+    else if (obj.IsNumber()) {
+        if (obj.IsUint64()) {
+            ret.mUint64Value.value = obj.GetUint64();
+            ret.mUint64Value.isPresent = true;
+        } else if (obj.IsInt64()) {
+            ret.mInt64Value.value = obj.GetInt64();
+            ret.mInt64Value.isPresent = true;
+        } else if (obj.IsDouble()) {
+            ret.mDoubleValue.value = obj.GetDouble();
+            ret.mDoubleValue.isPresent = true;
+        }
+    }
+    else if (obj.IsString()) {
+        ReadValue(obj, ret.mStringValue);
+        ret.mStringValue.isPresent = true;
+    }
+    else if (obj.IsBool()) {
+        ret.mBoolValue.value = obj.GetBool();
+        ret.mBoolValue.isPresent = true;
+    }
+    return ret;
 }
 
 inline void Node::Read(Value &obj, Asset &r) {
@@ -1144,9 +1411,11 @@ inline void Node::Read(Value &obj, Asset &r) {
         }
     }
 
+	// Do not retrieve a skin here, just take a reference, to avoid infinite recursion
+    // Skins will be properly loaded later
     Value *curSkin = FindUInt(obj, "skin");
     if (nullptr != curSkin) {
-        this->skin = r.skins.Retrieve(curSkin->GetUint());
+        this->skin = r.skins.Get(curSkin->GetUint());
     }
 
     Value *curCamera = FindUInt(obj, "camera");
@@ -1159,6 +1428,8 @@ inline void Node::Read(Value &obj, Asset &r) {
 
     Value *curExtensions = FindObject(obj, "extensions");
     if (nullptr != curExtensions) {
+        this->extensions = ReadExtensions("extensions", *curExtensions);
+
         if (r.extensionsUsed.KHR_lights_punctual) {
             if (Value *ext = FindObject(*curExtensions, "KHR_lights_punctual")) {
                 Value *curLight = FindUInt(*ext, "light");
@@ -1174,6 +1445,11 @@ inline void Node::Read(Value &obj, Asset &r) {
 }
 
 inline void Scene::Read(Value &obj, Asset &r) {
+    if (Value *scene_name = FindString(obj, "name")) {
+        if (scene_name->IsString()) {
+            this->name = scene_name->GetString();
+        }
+    }
     if (Value *array = FindArray(obj, "nodes")) {
         for (unsigned int i = 0; i < array->Size(); ++i) {
             if (!(*array)[i].IsUint()) continue;
@@ -1284,7 +1560,7 @@ inline void AssetMetadata::Read(Document &doc) {
     }
 
     if (version.empty() || version[0] != '2') {
-        throw DeadlyImportError("GLTF: Unsupported glTF version: " + version);
+        throw DeadlyImportError("GLTF: Unsupported glTF version: ", version);
     }
 }
 
@@ -1293,6 +1569,7 @@ inline void AssetMetadata::Read(Document &doc) {
 //
 
 inline void Asset::ReadBinaryHeader(IOStream &stream, std::vector<char> &sceneData) {
+    ASSIMP_LOG_DEBUG("Reading GLTF2 binary");
     GLB_Header header;
     if (stream.Read(&header, sizeof(header), 1) != 1) {
         throw DeadlyImportError("GLTF: Unable to read the file header");
@@ -1356,12 +1633,15 @@ inline void Asset::ReadBinaryHeader(IOStream &stream, std::vector<char> &sceneDa
 }
 
 inline void Asset::Load(const std::string &pFile, bool isBinary) {
+    ASSIMP_LOG_DEBUG("Loading GLTF2 asset");
     mCurrentAssetDir.clear();
     /*int pos = std::max(int(pFile.rfind('/')), int(pFile.rfind('\\')));
     if (pos != int(std::string::npos)) */
 
-    mCurrentAssetDir = glTFCommon::getCurrentAssetDir(pFile);
-
+    if (0 != strncmp(pFile.c_str(), AI_MEMORYIO_MAGIC_FILENAME, AI_MEMORYIO_MAGIC_FILENAME_LENGTH)) {
+        mCurrentAssetDir = glTFCommon::getCurrentAssetDir(pFile);
+    }
+    
     shared_ptr<IOStream> stream(OpenFile(pFile.c_str(), "rb", true));
     if (!stream) {
         throw DeadlyImportError("GLTF: Could not open file for reading");
@@ -1387,14 +1667,14 @@ inline void Asset::Load(const std::string &pFile, bool isBinary) {
     }
 
     // parse the JSON document
-
+    ASSIMP_LOG_DEBUG("Parsing GLTF2 JSON");
     Document doc;
     doc.ParseInsitu(&sceneData[0]);
 
     if (doc.HasParseError()) {
         char buffer[32];
         ai_snprintf(buffer, 32, "%d", static_cast<int>(doc.GetErrorOffset()));
-        throw DeadlyImportError(std::string("GLTF: JSON parse error, offset ") + buffer + ": " + GetParseError_En(doc.GetParseError()));
+        throw DeadlyImportError("GLTF: JSON parse error, offset ", buffer, ": ", GetParseError_En(doc.GetParseError()));
     }
 
     if (!doc.IsObject()) {
@@ -1437,7 +1717,6 @@ inline void Asset::Load(const std::string &pFile, bool isBinary) {
         }
     }
 
-    // Force reading of skins since they're not always directly referenced
     if (Value *skinsArray = FindArray(doc, "skins")) {
         for (unsigned int i = 0; i < skinsArray->Size(); ++i) {
             skins.Retrieve(i);
@@ -1502,6 +1781,9 @@ inline void Asset::ReadExtensionsUsed(Document &doc) {
     CHECK_EXT(KHR_materials_unlit);
     CHECK_EXT(KHR_lights_punctual);
     CHECK_EXT(KHR_texture_transform);
+    CHECK_EXT(KHR_materials_sheen);
+    CHECK_EXT(KHR_materials_clearcoat);
+    CHECK_EXT(KHR_materials_transmission);
 
 #undef CHECK_EXT
 }
@@ -1548,8 +1830,8 @@ inline std::string Asset::FindUniqueID(const std::string &str, const char *suffi
     return id;
 }
 
-#ifdef _WIN32
-#    pragma warning(pop)
-#endif // _WIN32
+#if _MSC_VER
+#   pragma warning(pop)
+#endif // _MSC_VER
 
 } // namespace glTF2

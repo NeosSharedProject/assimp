@@ -59,6 +59,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <assimp/ParsingUtils.h>
 #include <assimp/fast_atof.h>
 #include <assimp/ByteSwapper.h>
+#include <assimp/DefaultLogger.hpp>
 
 #include <iostream>
 
@@ -72,17 +73,17 @@ namespace {
     AI_WONT_RETURN void ParseError(const std::string& message, const Token& token) AI_WONT_RETURN_SUFFIX;
     AI_WONT_RETURN void ParseError(const std::string& message, const Token& token)
     {
-        throw DeadlyImportError(Util::AddTokenText("FBX-Parser",message,&token));
+        throw DeadlyImportError("FBX-Parser", Util::GetTokenText(&token), message);
     }
 
     // ------------------------------------------------------------------------------------------------
-    AI_WONT_RETURN void ParseError(const std::string& message, const Element* element = NULL) AI_WONT_RETURN_SUFFIX;
+    AI_WONT_RETURN void ParseError(const std::string &message, const Element *element = nullptr) AI_WONT_RETURN_SUFFIX;
     AI_WONT_RETURN void ParseError(const std::string& message, const Element* element)
     {
         if(element) {
             ParseError(message,element->KeyToken());
         }
-        throw DeadlyImportError("FBX-Parser " + message);
+        throw DeadlyImportError("FBX-Parser ", message);
     }
 
 
@@ -180,7 +181,7 @@ Scope::Scope(Parser& parser,bool topLevel)
     }
 
     TokenPtr n = parser.AdvanceToNextToken();
-    if(n == NULL) {
+    if (n == nullptr) {
         ParseError("unexpected end of file");
     }
 
@@ -195,7 +196,7 @@ Scope::Scope(Parser& parser,bool topLevel)
 
         // Element() should stop at the next Key token (or right after a Close token)
         n = parser.CurrentToken();
-        if(n == NULL) {
+        if (n == nullptr) {
             if (topLevel) {
                 return;
             }
@@ -220,6 +221,7 @@ Parser::Parser (const TokenList& tokens, bool is_binary)
 , cursor(tokens.begin())
 , is_binary(is_binary)
 {
+    ASSIMP_LOG_DEBUG("Parsing FBX tokens");
     root.reset(new Scope(*this,true));
 }
 
@@ -234,7 +236,7 @@ TokenPtr Parser::AdvanceToNextToken()
 {
     last = current;
     if (cursor == tokens.end()) {
-        current = NULL;
+        current = nullptr;
     } else {
         current = *cursor++;
     }
@@ -256,7 +258,7 @@ TokenPtr Parser::LastToken() const
 // ------------------------------------------------------------------------------------------------
 uint64_t ParseTokenAsID(const Token& t, const char*& err_out)
 {
-    err_out = NULL;
+    err_out = nullptr;
 
     if (t.Type() != TokenType_DATA) {
         err_out = "expected TOK_DATA token";
@@ -294,7 +296,7 @@ uint64_t ParseTokenAsID(const Token& t, const char*& err_out)
 size_t ParseTokenAsDim(const Token& t, const char*& err_out)
 {
     // same as ID parsing, except there is a trailing asterisk
-    err_out = NULL;
+    err_out = nullptr;
 
     if (t.Type() != TokenType_DATA) {
         err_out = "expected TOK_DATA token";
@@ -340,7 +342,7 @@ size_t ParseTokenAsDim(const Token& t, const char*& err_out)
 // ------------------------------------------------------------------------------------------------
 float ParseTokenAsFloat(const Token& t, const char*& err_out)
 {
-    err_out = NULL;
+    err_out = nullptr;
 
     if (t.Type() != TokenType_DATA) {
         err_out = "expected TOK_DATA token";
@@ -383,7 +385,7 @@ float ParseTokenAsFloat(const Token& t, const char*& err_out)
 // ------------------------------------------------------------------------------------------------
 int ParseTokenAsInt(const Token& t, const char*& err_out)
 {
-    err_out = NULL;
+    err_out = nullptr;
 
     if (t.Type() != TokenType_DATA) {
         err_out = "expected TOK_DATA token";
@@ -419,7 +421,7 @@ int ParseTokenAsInt(const Token& t, const char*& err_out)
 // ------------------------------------------------------------------------------------------------
 int64_t ParseTokenAsInt64(const Token& t, const char*& err_out)
 {
-    err_out = NULL;
+    err_out = nullptr;
 
     if (t.Type() != TokenType_DATA) {
         err_out = "expected TOK_DATA token";
@@ -456,7 +458,7 @@ int64_t ParseTokenAsInt64(const Token& t, const char*& err_out)
 // ------------------------------------------------------------------------------------------------
 std::string ParseTokenAsString(const Token& t, const char*& err_out)
 {
-    err_out = NULL;
+    err_out = nullptr;
 
     if (t.Type() != TokenType_DATA) {
         err_out = "expected TOK_DATA token";
@@ -639,7 +641,11 @@ void ParseVectorDataArray(std::vector<aiVector3D>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * (type == 'd' ? 8 : 4));
+        uint64_t dataToRead = static_cast<uint64_t>(count) * (type == 'd' ? 8 : 4);
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         const uint32_t count3 = count / 3;
         out.reserve(count3);
@@ -726,7 +732,11 @@ void ParseVectorDataArray(std::vector<aiColor4D>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * (type == 'd' ? 8 : 4));
+        uint64_t dataToRead = static_cast<uint64_t>(count) * (type == 'd' ? 8 : 4);
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         const uint32_t count4 = count / 4;
         out.reserve(count4);
@@ -805,7 +815,11 @@ void ParseVectorDataArray(std::vector<aiVector2D>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * (type == 'd' ? 8 : 4));
+        uint64_t dataToRead = static_cast<uint64_t>(count) * (type == 'd' ? 8 : 4);
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         const uint32_t count2 = count / 2;
         out.reserve(count2);
@@ -877,7 +891,11 @@ void ParseVectorDataArray(std::vector<int>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * 4);
+        uint64_t dataToRead = static_cast<uint64_t>(count) * 4;
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         out.reserve(count);
 
@@ -935,7 +953,11 @@ void ParseVectorDataArray(std::vector<float>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * (type == 'd' ? 8 : 4));
+        uint64_t dataToRead = static_cast<uint64_t>(count) * (type == 'd' ? 8 : 4);
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         if (type == 'd') {
             const double* d = reinterpret_cast<const double*>(&buff[0]);
@@ -996,7 +1018,11 @@ void ParseVectorDataArray(std::vector<unsigned int>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * 4);
+        uint64_t dataToRead = static_cast<uint64_t>(count) * 4;
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         out.reserve(count);
 
@@ -1061,7 +1087,11 @@ void ParseVectorDataArray(std::vector<uint64_t>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * 8);
+        uint64_t dataToRead = static_cast<uint64_t>(count) * 8;
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         out.reserve(count);
 
@@ -1119,7 +1149,11 @@ void ParseVectorDataArray(std::vector<int64_t>& out, const Element& el)
         ReadBinaryDataArray(type, count, data, end, buff, el);
 
         ai_assert(data == end);
-        ai_assert(buff.size() == count * 8);
+        uint64_t dataToRead = static_cast<uint64_t>(count) * 8;
+        ai_assert(buff.size() == dataToRead);
+        if (dataToRead > buff.size()) {
+            ParseError("Invalid read size (binary)",&el);
+        }
 
         out.reserve(count);
 
@@ -1209,7 +1243,7 @@ bool HasElement( const Scope& sc, const std::string& index ) {
 
 // ------------------------------------------------------------------------------------------------
 // extract a required element from a scope, abort if the element cannot be found
-const Element& GetRequiredElement(const Scope& sc, const std::string& index, const Element* element /*= NULL*/)
+const Element& GetRequiredElement(const Scope& sc, const std::string& index, const Element* element /*= nullptr*/)
 {
     const Element* el = sc[index];
     if(!el) {

@@ -38,6 +38,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------
 */
+#ifndef ASSIMP_BUILD_NO_GLTF_IMPORTER
+
 #include "AssetLib/glTF/glTFCommon.h"
 
 namespace glTFCommon {
@@ -47,7 +49,9 @@ using namespace glTFCommon::Util;
 namespace Util {
 
 size_t DecodeBase64(const char *in, size_t inLength, uint8_t *&out) {
-    ai_assert(inLength % 4 == 0);
+    if (inLength % 4 != 0) {
+        throw DeadlyImportError("Invalid base64 encoded data: \"", std::string(in, std::min(size_t(32), inLength)), "\", length:", inLength);
+    }
 
     if (inLength < 4) {
         out = 0;
@@ -145,13 +149,13 @@ bool ParseDataURI(const char *const_uri, size_t uriLen, DataURI &out) {
         size_t i = 5, j;
         if (uri[i] != ';' && uri[i] != ',') { // has media type?
             uri[1] = char(i);
-            for (; uri[i] != ';' && uri[i] != ',' && i < uriLen; ++i) {
+            for (;i < uriLen && uri[i] != ';' && uri[i] != ','; ++i) {
                 // nothing to do!
             }
         }
-        while (uri[i] == ';' && i < uriLen) {
+        while (i < uriLen && uri[i] == ';') {
             uri[i++] = '\0';
-            for (j = i; uri[i] != ';' && uri[i] != ',' && i < uriLen; ++i) {
+            for (j = i; i < uriLen && uri[i] != ';' && uri[i] != ','; ++i) {
                 // nothing to do!
             }
 
@@ -187,3 +191,5 @@ bool ParseDataURI(const char *const_uri, size_t uriLen, DataURI &out) {
 
 } // namespace Util
 } // namespace glTFCommon
+
+#endif
