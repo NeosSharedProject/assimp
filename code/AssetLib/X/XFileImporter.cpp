@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2020, assimp team
+Copyright (c) 2006-2021, assimp team
 
 All rights reserved.
 
@@ -667,8 +667,8 @@ void XFileImporter::ConvertMaterials( aiScene* pScene, std::vector<XFile::Materi
 
                 // convert to lower case for easier comparison
                 for ( unsigned int c = 0; c < sz.length(); ++c ) {
-                    if ( isalpha( sz[ c ] ) ) {
-                        sz[ c ] = (char) tolower( sz[ c ] );
+                    if ( isalpha( (unsigned char) sz[ c ] ) ) {
+                        sz[ c ] = (char) tolower( (unsigned char) sz[ c ] );
                     }
                 }
 

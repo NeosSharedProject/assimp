@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2020, assimp team
+Copyright (c) 2006-2021, assimp team
 
 All rights reserved.
 
@@ -143,7 +143,13 @@ void Discreet3DSImporter::SetupProperties(const Importer * /*pImp*/) {
 // Imports the given file into the given scene structure.
 void Discreet3DSImporter::InternReadFile(const std::string &pFile,
         aiScene *pScene, IOSystem *pIOHandler) {
-    StreamReaderLE theStream(pIOHandler->Open(pFile, "rb"));
+
+    auto theFile = pIOHandler->Open(pFile, "rb");
+    if (!theFile) {
+        throw DeadlyImportError("3DS: Could not open ", pFile);
+    }
+
+    StreamReaderLE theStream(theFile);
 
     // We should have at least one chunk
     if (theStream.GetRemainingSize() < 16) {
@@ -164,7 +170,7 @@ void Discreet3DSImporter::InternReadFile(const std::string &pFile,
     mRootNode->mHierarchyIndex = -1;
     mRootNode->mParent = nullptr;
     mMasterScale = 1.0f;
-    mBackgroundImage = "";
+    mBackgroundImage = std::string();
     bHasBG = false;
     bIsPrj = false;
 
@@ -324,7 +330,7 @@ void Discreet3DSImporter::ParseObjectChunk() {
     case Discreet3DS::CHUNK_MAT_MATERIAL:
 
         // Add a new material to the list
-        mScene->mMaterials.push_back(D3DS::Material(std::string("UNNAMED_" + to_string(mScene->mMaterials.size()))));
+        mScene->mMaterials.push_back(D3DS::Material(std::string("UNNAMED_" + ai_to_string(mScene->mMaterials.size()))));
         ParseMaterialChunk();
         break;
 

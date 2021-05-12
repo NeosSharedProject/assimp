@@ -2,7 +2,7 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2020, assimp team
+Copyright (c) 2006-2021, assimp team
 
 All rights reserved.
 
@@ -137,7 +137,13 @@ void COBImporter::SetupProperties(const Importer * /*pImp*/) {
 // Imports the given file into the given scene structure.
 void COBImporter::InternReadFile(const std::string &pFile, aiScene *pScene, IOSystem *pIOHandler) {
     COB::Scene scene;
-    std::unique_ptr<StreamReaderLE> stream(new StreamReaderLE(pIOHandler->Open(pFile, "rb")));
+
+    auto file = pIOHandler->Open(pFile, "rb");
+    if (!file) {
+        ThrowException("Could not open " + pFile);
+    }
+
+    std::unique_ptr<StreamReaderLE> stream(new StreamReaderLE(file));
 
     // check header
     char head[32];

@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2020, assimp team
+Copyright (c) 2006-2021, assimp team
 
 All rights reserved.
 
@@ -252,7 +252,7 @@ void MDLImporter::InternReadFile(const std::string &pFile,
         } else {
             // print the magic word to the log file
             throw DeadlyImportError("Unknown MDL subformat ", pFile,
-                                    ". Magic word (", std::string((char *)&iMagicWord, 4), ") is not known");
+                                    ". Magic word (", ai_str_toprintable((const char *)&iMagicWord, sizeof(iMagicWord)), ") is not known");
         }
 
         // Now rotate the whole scene 90 degrees around the x axis to convert to internal coordinate system

@@ -2,7 +2,7 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2020, assimp team
+Copyright (c) 2006-2021, assimp team
 
 All rights reserved.
 
@@ -43,13 +43,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define INCLUDED_AI_IRRXML_WRAPPER
 
 #include <assimp/DefaultLogger.hpp>
+#include <assimp/ai_assert.h>
+
 #include "BaseImporter.h"
 #include "IOStream.hpp"
+
 #include <pugixml.hpp>
 #include <vector>
 
 namespace Assimp {
 
+/// @brief  Will find a node by its name.
 struct find_node_by_name_predicate {
     std::string mName;
     find_node_by_name_predicate(const std::string &name) :
@@ -88,7 +92,11 @@ public:
     }
 
     void clear() {
-        mData.resize(0);
+        if(mData.empty()) {
+            mDoc = nullptr;
+            return;
+        }
+        mData.clear();
         delete mDoc;
         mDoc = nullptr;
     }
@@ -131,7 +139,9 @@ public:
         if (parse_result.status == pugi::status_ok) {
             return true;
         } else {
-            ASSIMP_LOG_DEBUG("Error while parse xml.");
+            std::ostringstream oss;
+            oss << "Error while parsing XML: " << parse_result.description() << " @ " << parse_result.offset;
+            ASSIMP_LOG_DEBUG(oss.str());
             return false;
         }
     }
@@ -178,6 +188,19 @@ public:
         return true;
     }
 
+    static inline bool getRealAttribute( XmlNode &xmlNode, const char *name, ai_real &val ) {
+        pugi::xml_attribute attr = xmlNode.attribute(name);
+        if (attr.empty()) {
+            return false;
+        }
+#ifdef ASSIMP_DOUBLE_PRECISION
+        val = attr.as_double();
+#else
+        val = attr.as_float();
+#endif
+        return true;
+    }
+
     static inline bool getFloatAttribute(XmlNode &xmlNode, const char *name, float &val ) {
         pugi::xml_attribute attr = xmlNode.attribute(name);
         if (attr.empty()) {
@@ -221,7 +244,7 @@ public:
     }
 
     static inline bool getValueAsString( XmlNode &node, std::string &text ) {
-        text = "";
+        text = std::string();
         if (node.empty()) {
             return false;
         }

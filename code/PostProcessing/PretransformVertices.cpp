@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2020, assimp team
+Copyright (c) 2006-2021, assimp team
 
 
 
@@ -429,7 +429,7 @@ void PretransformVertices::Execute(aiScene *pScene) {
 	const unsigned int iOldNodes = CountNodes(pScene->mRootNode);
 
 	if (configTransform) {
-		pScene->mRootNode->mTransformation = configTransformation;
+		pScene->mRootNode->mTransformation = configTransformation * pScene->mRootNode->mTransformation;
 	}
 
 	// first compute absolute transformation matrices for all nodes
