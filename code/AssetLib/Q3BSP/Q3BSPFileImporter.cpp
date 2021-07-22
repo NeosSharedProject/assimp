@@ -99,7 +99,7 @@ static void extractIds(const std::string &key, int &id1, int &id2) {
         return;
     }
 
-    const std::string::size_type pos = key.find(".");
+    const std::string::size_type pos = key.find('.');
     if (std::string::npos == pos) {
         return;
     }
@@ -208,7 +208,7 @@ void Q3BSPFileImporter::separateMapName(const std::string &importName, std::stri
         return;
     }
 
-    const std::string::size_type pos = importName.rfind(",");
+    const std::string::size_type pos = importName.rfind(',');
     if (std::string::npos == pos) {
         archiveName = importName;
         return;
@@ -446,7 +446,7 @@ void Q3BSPFileImporter::createMaterials(const Q3BSP::Q3BSPModel *pModel, aiScene
                 normalizePathName(tmp, texName);
 
                 if (!importTextureFromArchive(pModel, pArchive, pScene, pMatHelper, textureId)) {
-                    ASSIMP_LOG_ERROR("Cannot import texture from archive " + texName);
+                    ASSIMP_LOG_ERROR("Cannot import texture from archive ", texName);
                 }
             }
         }
