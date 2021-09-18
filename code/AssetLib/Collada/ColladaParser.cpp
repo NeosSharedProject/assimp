@@ -231,11 +231,7 @@ void ColladaParser::UriDecodePath(aiString &ss) {
 
     // Maxon Cinema Collada Export writes "file:///C:\andsoon" with three slashes...
     // I need to filter it without destroying linux paths starting with "/somewhere"
-#if defined(_MSC_VER)
     if (ss.data[0] == '/' && isalpha((unsigned char)ss.data[1]) && ss.data[2] == ':') {
-#else
-    if (ss.data[0] == '/' && isalpha((unsigned char)ss.data[1]) && ss.data[2] == ':') {
-#endif
         --ss.length;
         ::memmove(ss.data, ss.data + 1, ss.length);
         ss.data[ss.length] = 0;
@@ -918,7 +914,7 @@ void ColladaParser::ReadMaterial(XmlNode &node, Collada::Material &pMaterial) {
         if (currentName == "instance_effect") {
             std::string url;
             readUrlAttribute(currentNode, url);
-            pMaterial.mEffect = url.c_str();
+            pMaterial.mEffect = url;
         }
     }
 }
@@ -2208,8 +2204,8 @@ void ColladaParser::ReadMaterialVertexInputBinding(XmlNode &node, Collada::Seman
 
 void ColladaParser::ReadEmbeddedTextures(ZipArchiveIOSystem &zip_archive) {
     // Attempt to load any undefined Collada::Image in ImageLibrary
-    for (ImageLibrary::iterator it = mImageLibrary.begin(); it != mImageLibrary.end(); ++it) {
-        Collada::Image &image = (*it).second;
+    for (auto & it : mImageLibrary) {
+        Collada::Image &image = it.second;
 
         if (image.mImageData.empty()) {
             std::unique_ptr<IOStream> image_file(zip_archive.Open(image.mFileName.c_str()));
