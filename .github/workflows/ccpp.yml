@@ -128,10 +128,10 @@ jobs:
       shell: bash
 
     - uses: actions/upload-artifact@v3
-      if: contains(matrix.name, 'latest')
+      if: contains(matrix.name,'windows')
       with:
         name: 'assimp-bins-${{ matrix.name }}'
-        path: build/bin
+        path: build/bin/assimp*.exe
         
     - uses: marvinpinto/action-automatic-releases@latest
       if: contains(matrix.name, 'windows-msvc-hunter')
@@ -141,7 +141,7 @@ jobs:
         prerelease: true
         title: "AutoRelease"
         files: |
-          build/bin/*
+          build/bin/assimp*.exe
 
   create-release:
     needs: [build]
@@ -215,4 +215,4 @@ jobs:
         with:
           files: |
             *.zip
-  
+ 
