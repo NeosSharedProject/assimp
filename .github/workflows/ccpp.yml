@@ -130,7 +130,7 @@ jobs:
       if: contains(matrix.name,'windows')
       with:
         name: 'assimp-bins-${{ matrix.name }}'
-        path: build/bin/assimp.*.exe
+        path: build/*
         
     - uses: marvinpinto/action-automatic-releases@latest
       if: contains(matrix.name, 'windows-msvc-hunter')
