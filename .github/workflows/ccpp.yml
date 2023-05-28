@@ -140,6 +140,7 @@ jobs:
         prerelease: true
         name: 'assimp-bins-${{ matrix.name }}-${{ github.sha }}'
         files: build/bin/*
+        tag_name: master
 
   create-release:
     needs: [job]
@@ -205,4 +206,5 @@ jobs:
         with:
           name: create-release
           files: 'assimp-bins-${{ matrix.name }}-${{ github.sha }}'
+          tag_name: master
  
