@@ -127,20 +127,19 @@ jobs:
       shell: bash
 
     - uses: actions/upload-artifact@v3
+      name: upload-artifact-for-windows
       if: contains(matrix.name,'windows')
       with:
         name: 'assimp-bins-${{ matrix.name }}'
         path: build/bin/*
         
-    - uses: marvinpinto/action-automatic-releases@latest
+    - uses: softprops/action-gh-release@v1
+      name: Release
       if: contains(matrix.name, 'windows-msvc-hunter')
       with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "master"
         prerelease: true
-        title: "AutoRelease"
-        files: |
-          build/bin/assimp.*.exe
+        name: 'assimp-bins-${{ matrix.name }}-${{ github.sha }}'
+        files: build/bin/*
 
   create-release:
     needs: [job]
@@ -199,19 +198,11 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: softprops/action-gh-release@v1
-        with:
-          name: create-release
-      - id: upload-url
-        run: |
-          echo "url=$(cat create-release/release_upload_url.txt)" >> $GITHUB_OUTPUT
       - uses: actions/download-artifact@v1
         with:
           name: 'assimp-bins-${{ matrix.name }}-${{ github.sha }}'
-      - uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: '${{secrets.GITHUB_TOKEN}}'
+      - uses: softprops/action-gh-release@v1
         with:
-          files: |
-            *.zip
+          name: create-release
+          files: 'assimp-bins-${{ matrix.name }}-${{ github.sha }}'
  
