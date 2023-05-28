@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 All rights reserved.
 
@@ -75,30 +75,15 @@ static const aiImporterDesc desc = {
 
 // ------------------------------------------------------------------------------------------------
 // Constructor to be privately used by Importer
-XFileImporter::XFileImporter()
-: mBuffer() {
-    // empty
-}
-
-// ------------------------------------------------------------------------------------------------
-// Destructor, private as well
-XFileImporter::~XFileImporter() {
+XFileImporter::XFileImporter() : mBuffer() {
     // empty
 }
 
 // ------------------------------------------------------------------------------------------------
 // Returns whether the class can handle the format of the given file.
-bool XFileImporter::CanRead( const std::string& pFile, IOSystem* pIOHandler, bool checkSig) const {
-    std::string extension = GetExtension(pFile);
-    if(extension == "x") {
-        return true;
-    }
-    if (!extension.length() || checkSig) {
-        uint32_t token[1];
-        token[0] = AI_MAKE_MAGIC("xof ");
-        return CheckMagicToken(pIOHandler,pFile,token,1,0);
-    }
-    return false;
+bool XFileImporter::CanRead( const std::string& pFile, IOSystem* pIOHandler, bool /*checkSig*/) const {
+    static const uint32_t token[] = { AI_MAKE_MAGIC("xof ") };
+    return CheckMagicToken(pIOHandler,pFile,token,AI_COUNT_OF(token));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -112,7 +97,7 @@ const aiImporterDesc* XFileImporter::GetInfo () const {
 void XFileImporter::InternReadFile( const std::string& pFile, aiScene* pScene, IOSystem* pIOHandler) {
     // read file into memory
     std::unique_ptr<IOStream> file( pIOHandler->Open( pFile));
-    if ( file.get() == nullptr ) {
+    if (file == nullptr) {
         throw DeadlyImportError( "Failed to open file ", pFile, "." );
     }
 
@@ -219,7 +204,7 @@ aiNode* XFileImporter::CreateNodes( aiScene* pScene, aiNode* pParent, const XFil
     // convert meshes from the source node
     CreateMeshes( pScene, node, pNode->mMeshes);
 
-    // handle childs
+    // handle children
     if( !pNode->mChildren.empty() ) {
         node->mNumChildren = (unsigned int)pNode->mChildren.size();
         node->mChildren = new aiNode* [node->mNumChildren];
@@ -388,7 +373,7 @@ void XFileImporter::CreateMeshes( aiScene* pScene, aiNode* pNode, const std::vec
                     // does the new vertex stem from an old vertex which was influenced by this bone?
                     ai_real w = oldWeights[orgPoints[d]];
                     if ( w > 0.0 ) {
-                        newWeights.push_back( aiVertexWeight( d, w ) );
+                        newWeights.emplace_back( d, w );
                     }
                 }
 

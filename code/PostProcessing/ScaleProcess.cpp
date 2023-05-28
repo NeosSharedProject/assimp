@@ -2,7 +2,7 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 
 All rights reserved.
@@ -52,9 +52,7 @@ ScaleProcess::ScaleProcess()
 , mScale( AI_CONFIG_GLOBAL_SCALE_FACTOR_DEFAULT ) {
 }
 
-ScaleProcess::~ScaleProcess() {
-    // empty
-}
+ScaleProcess::~ScaleProcess() = default;
 
 void ScaleProcess::setScale( ai_real scale ) {
     mScale = scale;
@@ -118,7 +116,7 @@ void ScaleProcess::Execute( aiScene* pScene ) {
     {
         aiMesh *mesh = pScene->mMeshes[meshID];
 
-        // Reconstruct mesh vertexes to the new unit system
+        // Reconstruct mesh vertices to the new unit system
         for( unsigned int vertexID = 0; vertexID < mesh->mNumVertices; vertexID++)
         {
             aiVector3D& vertex = mesh->mVertices[vertexID];

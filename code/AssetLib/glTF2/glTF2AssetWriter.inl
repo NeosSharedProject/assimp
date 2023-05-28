@@ -2,7 +2,7 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 All rights reserved.
 
@@ -39,6 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----------------------------------------------------------------------
 */
 
+#include <assimp/Base64.hpp>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <rapidjson/prettywriter.h>
@@ -260,7 +261,7 @@ namespace glTF2 {
             if (img.HasData()) {
                 uri = "data:" + (img.mimeType.empty() ? "application/octet-stream" : img.mimeType);
                 uri += ";base64,";
-                glTFCommon::Util::EncodeBase64(img.GetData(), img.GetDataLength(), uri);
+                Base64::Encode(img.GetData(), img.GetDataLength(), uri);
             }
             else {
                 uri = img.uri;
@@ -471,6 +472,56 @@ namespace glTF2 {
 
             if (!materialTransmission.ObjectEmpty()) {
                 exts.AddMember("KHR_materials_transmission", materialTransmission, w.mAl);
+            }
+        }
+
+        if (m.materialVolume.isPresent) {
+            Value materialVolume(rapidjson::Type::kObjectType);
+
+            MaterialVolume &volume = m.materialVolume.value;
+
+            if (volume.thicknessFactor != 0.f) {
+                WriteFloat(materialVolume, volume.thicknessFactor, "thicknessFactor", w.mAl);
+            }
+
+            WriteTex(materialVolume, volume.thicknessTexture, "thicknessTexture", w.mAl);
+
+            if (volume.attenuationDistance != INFINITY) {
+                WriteFloat(materialVolume, volume.attenuationDistance, "attenuationDistance", w.mAl);
+            }
+
+            WriteVec(materialVolume, volume.attenuationColor, "attenuationColor", defaultAttenuationColor, w.mAl);
+
+            if (!materialVolume.ObjectEmpty()) {
+                exts.AddMember("KHR_materials_volume", materialVolume, w.mAl);
+            }
+        }
+
+        if (m.materialIOR.isPresent) {
+            Value materialIOR(rapidjson::Type::kObjectType);
+
+            MaterialIOR &ior = m.materialIOR.value;
+
+            if (ior.ior != 1.5f) {
+                WriteFloat(materialIOR, ior.ior, "ior", w.mAl);
+            }
+
+            if (!materialIOR.ObjectEmpty()) {
+                exts.AddMember("KHR_materials_ior", materialIOR, w.mAl);
+            }
+        }
+
+        if (m.materialEmissiveStrength.isPresent) {
+            Value materialEmissiveStrength(rapidjson::Type::kObjectType);
+
+            MaterialEmissiveStrength &emissiveStrength = m.materialEmissiveStrength.value;
+
+            if (emissiveStrength.emissiveStrength != 0.f) {
+                WriteFloat(materialEmissiveStrength, emissiveStrength.emissiveStrength, "emissiveStrength", w.mAl);
+            }
+
+            if (!materialEmissiveStrength.ObjectEmpty()) {
+                exts.AddMember("KHR_materials_emissive_strength", materialEmissiveStrength, w.mAl);
             }
         }
 
@@ -721,7 +772,7 @@ namespace glTF2 {
     {
         std::unique_ptr<IOStream> jsonOutFile(mAsset.OpenFile(path, "wt", true));
 
-        if (jsonOutFile == 0) {
+        if (jsonOutFile == nullptr) {
             throw DeadlyExportError("Could not open output file: " + std::string(path));
         }
 
@@ -744,7 +795,7 @@ namespace glTF2 {
 
             std::unique_ptr<IOStream> binOutFile(mAsset.OpenFile(binPath, "wb", true));
 
-            if (binOutFile == 0) {
+            if (binOutFile == nullptr) {
                 throw DeadlyExportError("Could not open output file: " + binPath);
             }
 
@@ -760,7 +811,7 @@ namespace glTF2 {
     {
         std::unique_ptr<IOStream> outfile(mAsset.OpenFile(path, "wb", true));
 
-        if (outfile == 0) {
+        if (outfile == nullptr) {
             throw DeadlyExportError("Could not open output file: " + std::string(path));
         }
 
@@ -888,6 +939,18 @@ namespace glTF2 {
 
             if (this->mAsset.extensionsUsed.KHR_materials_transmission) {
                 exts.PushBack(StringRef("KHR_materials_transmission"), mAl);
+            }
+
+            if (this->mAsset.extensionsUsed.KHR_materials_volume) {
+                exts.PushBack(StringRef("KHR_materials_volume"), mAl);
+            }
+
+            if (this->mAsset.extensionsUsed.KHR_materials_ior) {
+                exts.PushBack(StringRef("KHR_materials_ior"), mAl);
+            }
+
+            if (this->mAsset.extensionsUsed.KHR_materials_emissive_strength) {
+                exts.PushBack(StringRef("KHR_materials_emissive_strength"), mAl);
             }
 
             if (this->mAsset.extensionsUsed.FB_ngon_encoding) {

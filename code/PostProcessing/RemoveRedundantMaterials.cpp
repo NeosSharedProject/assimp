@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 
 
@@ -50,6 +50,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <assimp/ParsingUtils.h>
 #include "ProcessHelper.h"
 #include "Material/MaterialSystem.h"
+#include <assimp/Exceptional.h>
 #include <stdio.h>
 
 using namespace Assimp;
@@ -63,10 +64,7 @@ RemoveRedundantMatsProcess::RemoveRedundantMatsProcess()
 
 // ------------------------------------------------------------------------------------------------
 // Destructor, private as well
-RemoveRedundantMatsProcess::~RemoveRedundantMatsProcess()
-{
-    // nothing to do here
-}
+RemoveRedundantMatsProcess::~RemoveRedundantMatsProcess() = default;
 
 // ------------------------------------------------------------------------------------------------
 // Returns whether the processing step is present in the given flag field.
@@ -171,6 +169,8 @@ void RemoveRedundantMatsProcess::Execute( aiScene* pScene)
         }
         // If the new material count differs from the original,
         // we need to rebuild the material list and remap mesh material indexes.
+        if(iNewNum < 1)
+          throw DeadlyImportError("No materials remaining");
         if (iNewNum != pScene->mNumMaterials) {
             ai_assert(iNewNum > 0);
             aiMaterial** ppcMaterials = new aiMaterial*[iNewNum];

@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 All rights reserved.
 
@@ -65,13 +65,12 @@ using namespace Assimp;
 // Constructor to be privately used by Importer
 BaseImporter::BaseImporter() AI_NO_EXCEPT
         : m_progress() {
+    // empty
 }
 
 // ------------------------------------------------------------------------------------------------
 // Destructor, private as well
-BaseImporter::~BaseImporter() {
-    // nothing to do here
-}
+BaseImporter::~BaseImporter() = default;
 
 void BaseImporter::UpdateImporterScale(Importer *pImp) {
     ai_assert(pImp != nullptr);
@@ -156,7 +155,7 @@ void BaseImporter::GetExtensionList(std::set<std::string> &extensions) {
 /*static*/ bool BaseImporter::SearchFileHeaderForToken(IOSystem *pIOHandler,
         const std::string &pFile,
         const char **tokens,
-        unsigned int numTokens,
+        std::size_t numTokens,
         unsigned int searchBytes /* = 200 */,
         bool tokensSol /* false */,
         bool noAlphaBeforeTokens /* false */) {
@@ -207,7 +206,7 @@ void BaseImporter::GetExtensionList(std::set<std::string> &extensions) {
             if (!r) {
                 continue;
             }
-            // We need to make sure that we didn't accidentially identify the end of another token as our token,
+            // We need to make sure that we didn't accidentally identify the end of another token as our token,
             // e.g. in a previous version the "gltf " present in some gltf files was detected as "f "
             if (noAlphaBeforeTokens && (r != buffer && isalpha(static_cast<unsigned char>(r[-1])))) {
                 continue;
@@ -233,19 +232,23 @@ void BaseImporter::GetExtensionList(std::set<std::string> &extensions) {
     std::string::size_type pos = pFile.find_last_of('.');
 
     // no file extension - can't read
-    if (pos == std::string::npos)
+    if (pos == std::string::npos) {
         return false;
+    }
 
     const char *ext_real = &pFile[pos + 1];
-    if (!ASSIMP_stricmp(ext_real, ext0))
+    if (!ASSIMP_stricmp(ext_real, ext0)) {
         return true;
+    }
 
     // check for other, optional, file extensions
-    if (ext1 && !ASSIMP_stricmp(ext_real, ext1))
+    if (ext1 && !ASSIMP_stricmp(ext_real, ext1)) {
         return true;
+    }
 
-    if (ext2 && !ASSIMP_stricmp(ext_real, ext2))
-        return true;
+    if (ext2 && !ASSIMP_stricmp(ext_real, ext2)) {
+        return true;        
+    }
 
     return false;
 }
@@ -267,10 +270,11 @@ std::string BaseImporter::GetExtension(const std::string &file) {
     return ret;
 }
 
+
 // ------------------------------------------------------------------------------------------------
 // Check for magic bytes at the beginning of the file.
 /* static */ bool BaseImporter::CheckMagicToken(IOSystem *pIOHandler, const std::string &pFile,
-        const void *_magic, unsigned int num, unsigned int offset, unsigned int size) {
+        const void *_magic, std::size_t num, unsigned int offset, unsigned int size) {
     ai_assert(size <= 16);
     ai_assert(_magic);
 
@@ -372,7 +376,10 @@ void BaseImporter::ConvertToUTF8(std::vector<char> &data) {
 
     // UTF 16 BE with BOM
     if (*((uint16_t *)&data.front()) == 0xFFFE) {
-
+        // Check to ensure no overflow can happen
+        if(data.size() % 2 != 0) {
+            return;
+        }
         // swap the endianness ..
         for (uint16_t *p = (uint16_t *)&data.front(), *end = (uint16_t *)&data.back(); p <= end; ++p) {
             ByteSwap::Swap2(p);

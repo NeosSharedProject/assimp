@@ -2,7 +2,7 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 
 All rights reserved.
@@ -259,7 +259,7 @@ namespace Discreet3DS {
         // Specifies the file name of a texture
         CHUNK_MAPFILE = 0xA300,
 
-        // Specifies whether a materail requires two-sided rendering
+        // Specifies whether a material requires two-sided rendering
         CHUNK_MAT_TWO_SIDE = 0xA081,
         // ********************************************************************
 
